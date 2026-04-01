@@ -26,7 +26,7 @@
     }
   },
   "strategy": {
-    "name": "hybrid",
+    "name": "challenge_v1",
     "edge_buffer_ticks": 2,
     "max_abs_position": 80,
     "quote_width_ticks": 2,
@@ -35,6 +35,7 @@
     "event_threshold_qty": 10,
     "event_lookback_us": 8000,
     "aggressive_qty": 6,
+    "competition_share": 0.2,
     "diagnostics": true
   },
   "run": {

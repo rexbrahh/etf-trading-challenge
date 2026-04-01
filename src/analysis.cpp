@@ -33,6 +33,8 @@ void apply_override(AppConfig& config, const std::string& path, const nlohmann::
     config.strategy.quote_width_ticks = value.get<int>();
   } else if (path == "strategy.event_threshold_qty") {
     config.strategy.event_threshold_qty = value.get<Qty>();
+  } else if (path == "strategy.competition_share") {
+    config.strategy.competition_share = value.get<double>();
   } else if (path == "strategy.name") {
     config.strategy.name = value.get<std::string>();
   } else {

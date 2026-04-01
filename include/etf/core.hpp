@@ -174,7 +174,7 @@ struct SimulationConfig {
 };
 
 struct StrategyConfig {
-  std::string name{"hybrid"};
+  std::string name{"challenge_v1"};
   int edge_buffer_ticks{2};
   int max_abs_position{80};
   int quote_width_ticks{2};
@@ -183,6 +183,7 @@ struct StrategyConfig {
   Qty event_threshold_qty{10};
   TimestampUs event_lookback_us{8'000};
   Qty aggressive_qty{6};
+  double competition_share{0.20};
   bool diagnostics{true};
 };
 

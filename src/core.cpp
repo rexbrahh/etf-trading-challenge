@@ -258,6 +258,8 @@ AppConfig load_config_from_path(const std::string& path) {
   config.strategy.event_lookback_us =
       get_or(strategy, "event_lookback_us", config.strategy.event_lookback_us);
   config.strategy.aggressive_qty = get_or(strategy, "aggressive_qty", config.strategy.aggressive_qty);
+  config.strategy.competition_share =
+      get_or(strategy, "competition_share", config.strategy.competition_share);
   config.strategy.diagnostics = get_or(strategy, "diagnostics", config.strategy.diagnostics);
 
   config.run.log_output_path = get_or(run, "log_output_path", config.run.log_output_path);
@@ -340,6 +342,7 @@ nlohmann::json config_to_json(const AppConfig& config) {
            {"event_threshold_qty", config.strategy.event_threshold_qty},
            {"event_lookback_us", config.strategy.event_lookback_us},
            {"aggressive_qty", config.strategy.aggressive_qty},
+           {"competition_share", config.strategy.competition_share},
            {"diagnostics", config.strategy.diagnostics},
        }},
       {"run",
