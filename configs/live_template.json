@@ -1,0 +1,53 @@
+{
+  "simulation": {
+    "seed": 7,
+    "duration_us": 300000,
+    "noise_bot_count": 1,
+    "event_bot_count": 1,
+    "maker_k": 25.0,
+    "maker_reload_us": 3000,
+    "maker_offsets": [1, 2, 4],
+    "maker_level_qty": 8,
+    "noise_interval_us": 2000,
+    "event_interval_us": 25000,
+    "event_burst_count": 5,
+    "event_base_qty": 6,
+    "noise_base_qty": 3,
+    "strategy_timer_us": 1500,
+    "price_min": 300,
+    "price_max": 700,
+    "enable_passive_opponent": false,
+    "enable_naive_arb_opponent": false,
+    "initial_book_state": {
+      "E": { "bid": 499, "bid_qty": 10, "ask": 501, "ask_qty": 10 },
+      "T": { "bid": 499, "bid_qty": 10, "ask": 501, "ask_qty": 10 },
+      "F": { "bid": 499, "bid_qty": 10, "ask": 501, "ask_qty": 10 },
+      "ETF": { "bid": 499, "bid_qty": 10, "ask": 501, "ask_qty": 10 }
+    }
+  },
+  "strategy": {
+    "name": "hybrid",
+    "edge_buffer_ticks": 2,
+    "max_abs_position": 80,
+    "quote_width_ticks": 2,
+    "hedge_unit": 1,
+    "hedge_behavior": true,
+    "event_threshold_qty": 10,
+    "event_lookback_us": 8000,
+    "aggressive_qty": 6,
+    "diagnostics": true
+  },
+  "run": {
+    "log_output_path": "tmp/live_probe.ndjson",
+    "replay_input_path": "",
+    "sweep_overrides": [],
+    "live": {
+      "enabled": true,
+      "api_base_url": "https://api.comp.waterlooquantclub.com",
+      "websocket_url": "",
+      "run_id": "a6f5e8ee-4597-485f-aa17-b90737d7acc5",
+      "access_token": "replace-me",
+      "subscribe_markets": ["E", "T", "F", "ETF"]
+    }
+  }
+}
