@@ -538,9 +538,8 @@ class ChallengeV1Strategy final : public StrategyBase {
   StrategyDecision on_event(const MarketEvent& event, const MarketSnapshot& snapshot) override {
     sync_from_snapshot(snapshot);
     ingest_event(event);
-    if (std::holds_alternative<TradePrint>(event) || std::holds_alternative<Fill>(event) ||
-        std::holds_alternative<CancelAck>(event) || std::holds_alternative<Reject>(event)) {
-      return react_to_market(snapshot);
+    if (std::holds_alternative<TradePrint>(event)) {
+      return react_to_trade(std::get<TradePrint>(event), snapshot);
     }
     return {};
   }
@@ -901,7 +900,7 @@ class ChallengeV1Strategy final : public StrategyBase {
     return decision;
   }
 
-  StrategyDecision react_to_market(const MarketSnapshot& snapshot) {
+  StrategyDecision reactive_diagnostics(const MarketSnapshot& snapshot) {
     const auto fairs = single_name_fairs(snapshot.now);
     const auto etf_fair = challenge_etf_fair(fairs);
 
@@ -915,7 +914,17 @@ class ChallengeV1Strategy final : public StrategyBase {
       decision.diagnostics["target_delta_" + to_string(symbol)] = target_delta(symbol);
       decision.diagnostics["k_estimate_" + to_string(symbol)] = effective_k(symbol);
     }
-    return merge(std::move(decision), manage_event_and_unwind(snapshot, fairs, etf_fair));
+    return decision;
+  }
+
+  StrategyDecision react_to_trade(const TradePrint& trade, const MarketSnapshot& snapshot) {
+    auto decision = reactive_diagnostics(snapshot);
+    if (trade.source == "event_bot" && trade.symbol != Symbol::ETF && !trade.team_involved) {
+      const auto fairs = single_name_fairs(snapshot.now);
+      const auto etf_fair = challenge_etf_fair(fairs);
+      decision = merge(std::move(decision), manage_event_and_unwind(snapshot, fairs, etf_fair));
+    }
+    return decision;
   }
 
   std::map<Symbol, std::optional<OrderId>> quote_bid_ids_;
