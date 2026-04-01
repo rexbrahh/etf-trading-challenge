@@ -106,10 +106,10 @@ Symbol symbol_from_string(const std::string& value) {
 }
 
 Side side_from_string(const std::string& value) {
-  if (value == "buy") {
+  if (value == "buy" || value == "Buy") {
     return Side::Buy;
   }
-  if (value == "sell") {
+  if (value == "sell" || value == "Sell") {
     return Side::Sell;
   }
   throw std::invalid_argument("invalid side: " + value);

@@ -21,3 +21,10 @@ TEST_CASE("helper models are monotonic in the intended direction") {
   REQUIRE(etf::maker_bot_fair(100.0, 25.0) == Catch::Approx(496.0));
   REQUIRE(etf::width_scaled_flow(2.0, 3) > etf::width_scaled_flow(6.0, 3));
 }
+
+TEST_CASE("side parsing accepts exchange casing") {
+  REQUIRE(etf::side_from_string("buy") == etf::Side::Buy);
+  REQUIRE(etf::side_from_string("Buy") == etf::Side::Buy);
+  REQUIRE(etf::side_from_string("sell") == etf::Side::Sell);
+  REQUIRE(etf::side_from_string("Sell") == etf::Side::Sell);
+}
