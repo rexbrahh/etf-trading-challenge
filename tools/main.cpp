@@ -21,7 +21,7 @@ std::string resolve_config_path(const std::string& raw) {
 }
 
 void print_usage() {
-  std::cout << "usage: etf_lab <simulate|replay|sweep|analyze|live|live-protocol> <config-or-log>\n";
+  std::cout << "usage: etf_lab <simulate|replay|sweep|analyze|live|advise|live-protocol> <config-or-log>\n";
 }
 
 }  // namespace
@@ -63,6 +63,17 @@ int main(int argc, char** argv) {
       if (!config.run.live.enabled) {
         throw std::runtime_error("run.live.enabled must be true for `live`");
       }
+      const auto summary = etf::live_to_log(config);
+      etf::print_summary(summary);
+      return 0;
+    }
+    if (command == "advise") {
+      auto config = etf::load_config_from_path(resolve_config_path(path));
+      if (!config.run.live.enabled) {
+        throw std::runtime_error("run.live.enabled must be true for `advise`");
+      }
+      config.run.advisory_only = true;
+      std::cout << "advisory mode armed; waiting for the next live trading round...\n";
       const auto summary = etf::live_to_log(config);
       etf::print_summary(summary);
       return 0;
