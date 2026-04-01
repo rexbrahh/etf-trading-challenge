@@ -5,11 +5,16 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -36,6 +41,8 @@ namespace etf {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr TimestampUs kAdvisoryPrintIntervalUs = 250'000;
+constexpr TimestampUs kUrgentAdvisoryPrintIntervalUs = 75'000;
 
 TimestampUs wall_now_us() {
   return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now().time_since_epoch()).count();
@@ -195,6 +202,171 @@ MarketEvent parse_market_event(const nlohmann::json& json) {
     return reject;
   }
   return Timer{event.at("ts").get<TimestampUs>(), event.at("name").get<std::string>()};
+}
+
+struct AdvisoryFeedState {
+  TimestampUs last_print_wall_us{0};
+  std::string last_digest;
+};
+
+std::string signed_int(int value) { return (value >= 0 ? "+" : "") + std::to_string(value); }
+
+std::string format_double(double value, int precision = 1, bool force_sign = false) {
+  std::ostringstream out;
+  if (force_sign && value >= 0.0) {
+    out << '+';
+  }
+  out << std::fixed << std::setprecision(precision) << value;
+  return out.str();
+}
+
+std::string format_level(const std::optional<BookLevel>& level) {
+  if (!level) {
+    return "--";
+  }
+  return std::to_string(level->price) + "x" + std::to_string(level->qty);
+}
+
+std::optional<int> json_int(const nlohmann::json& json, const std::string& key) {
+  if (!json.contains(key)) {
+    return std::nullopt;
+  }
+  return json.at(key).get<int>();
+}
+
+std::optional<double> json_double(const nlohmann::json& json, const std::string& key) {
+  if (!json.contains(key)) {
+    return std::nullopt;
+  }
+  return json.at(key).get<double>();
+}
+
+std::string format_symbol_row(Symbol symbol, const MarketSnapshot& snapshot, const nlohmann::json& diagnostics) {
+  std::ostringstream out;
+  const auto& book = snapshot.books.at(symbol);
+  const auto position_it = snapshot.positions.find(symbol);
+  const auto current_position = position_it != snapshot.positions.end() ? position_it->second.qty : 0;
+  out << "  " << std::setw(3) << to_string(symbol) << " " << std::setw(8) << format_level(book.bid) << " / "
+      << std::setw(8) << format_level(book.ask) << "  pos " << std::setw(4) << signed_int(current_position);
+
+  if (const auto target = json_int(diagnostics, "target_delta_" + to_string(symbol)); target) {
+    out << "  tgt " << std::setw(4) << signed_int(*target) << "  gap " << std::setw(4)
+        << signed_int(*target - current_position);
+  }
+  if (const auto fair = json_double(diagnostics, "single_fair_" + to_string(symbol)); fair) {
+    out << "  fair " << std::setw(6) << format_double(*fair);
+  } else if (const auto fair = json_double(diagnostics, "etf_fair"); fair) {
+    out << "  fair " << std::setw(6) << format_double(*fair);
+  }
+  if (const auto settle = json_double(diagnostics, "settlement_hat_" + to_string(symbol)); settle) {
+    out << "  settle " << std::setw(6) << format_double(*settle);
+  }
+  if (const auto bias = json_int(diagnostics, "event_bias_" + to_string(symbol)); bias) {
+    out << "  bias " << std::setw(3) << signed_int(*bias);
+  }
+  return out.str();
+}
+
+std::string format_manual_action(const OrderCommand& command) {
+  return std::visit(
+      [](const auto& payload) -> std::string {
+        using T = std::decay_t<decltype(payload)>;
+        if constexpr (std::is_same_v<T, PlaceLimit>) {
+          std::ostringstream out;
+          out << (payload.side == Side::Buy ? "BUY  " : "SELL ") << std::setw(3) << to_string(payload.symbol) << " "
+              << payload.qty << " @ " << payload.price << " [" << payload.tag << "]";
+          return out.str();
+        } else if constexpr (std::is_same_v<T, Cancel>) {
+          return "CANCEL #" + std::to_string(payload.order_id) + " [" + payload.reason + "]";
+        } else {
+          std::ostringstream out;
+          out << "REPRICE #" << payload.order_id << " -> " << payload.new_price << " x" << payload.new_qty << " ["
+              << payload.tag << "]";
+          return out.str();
+        }
+      },
+      command);
+}
+
+std::string advisory_digest(const MarketSnapshot& snapshot, const StrategyDecision& decision) {
+  nlohmann::json digest = nlohmann::json::object();
+  digest["positions"] = nlohmann::json::object();
+  for (const auto symbol : all_symbols()) {
+    digest["positions"][to_string(symbol)] = snapshot.positions.at(symbol).qty;
+  }
+  digest["signal_symbol"] = decision.diagnostics.value("signal_symbol", "none");
+  digest["signal_signed_qty"] = decision.diagnostics.value("signal_signed_qty", 0);
+  for (const auto symbol : {Symbol::E, Symbol::T, Symbol::F}) {
+    const auto key = "target_delta_" + to_string(symbol);
+    if (decision.diagnostics.contains(key)) {
+      digest[key] = decision.diagnostics.at(key);
+    }
+  }
+  digest["etf_fair"] = decision.diagnostics.value("etf_fair", 0.0);
+  digest["commands"] = nlohmann::json::array();
+  for (const auto& command : decision.commands) {
+    digest["commands"].push_back(command_to_json(command));
+  }
+  return digest.dump();
+}
+
+bool should_print_advisory(const MarketSnapshot& snapshot, const StrategyDecision& decision, AdvisoryFeedState& state) {
+  const auto urgent = !decision.commands.empty() || decision.diagnostics.value("signal_symbol", "none") != "none";
+  const auto interval = urgent ? kUrgentAdvisoryPrintIntervalUs : kAdvisoryPrintIntervalUs;
+  const auto digest = advisory_digest(snapshot, decision);
+  const auto now = wall_now_us();
+  if (digest == state.last_digest && now - state.last_print_wall_us < interval) {
+    return false;
+  }
+  if (!urgent && state.last_print_wall_us != 0 && now - state.last_print_wall_us < interval) {
+    return false;
+  }
+  state.last_digest = digest;
+  state.last_print_wall_us = now;
+  return true;
+}
+
+std::string render_advisory_feed(const MarketSnapshot& snapshot, const std::string& strategy_name,
+                                 const StrategyDecision& decision) {
+  std::ostringstream out;
+  out << "\n[advisory] ts=" << snapshot.now << " strategy=" << strategy_name << " pnl="
+      << format_double(snapshot.pnl.total) << " (r=" << format_double(snapshot.pnl.realized) << ", u="
+      << format_double(snapshot.pnl.unrealized) << ")";
+  const auto signal_symbol = decision.diagnostics.value("signal_symbol", "none");
+  const auto signal_qty = decision.diagnostics.value("signal_signed_qty", 0);
+  out << " signal=" << signal_symbol;
+  if (signal_symbol != "none") {
+    out << " " << signed_int(signal_qty);
+  }
+  if (const auto fair = json_double(decision.diagnostics, "etf_fair"); fair) {
+    out << " etf_fair=" << format_double(*fair);
+  }
+  out << '\n';
+  out << format_symbol_row(Symbol::E, snapshot, decision.diagnostics) << '\n';
+  out << format_symbol_row(Symbol::T, snapshot, decision.diagnostics) << '\n';
+  out << format_symbol_row(Symbol::F, snapshot, decision.diagnostics) << '\n';
+  out << format_symbol_row(Symbol::ETF, snapshot, decision.diagnostics);
+
+  if (!decision.commands.empty()) {
+    out << "\n  proposed:";
+    const std::size_t shown = std::min<std::size_t>(decision.commands.size(), 6);
+    for (std::size_t index = 0; index < shown; ++index) {
+      out << "\n    - " << format_manual_action(decision.commands[index]);
+    }
+    if (decision.commands.size() > shown) {
+      out << "\n    - +" << (decision.commands.size() - shown) << " more";
+    }
+  }
+  return out.str();
+}
+
+void log_live_commands(RunLogger* logger, TimestampUs ts, const std::vector<OrderCommand>& commands, bool submitted) {
+  if (!logger) {
+    return;
+  }
+  for (const auto& command : commands) {
+    logger->log_order_command(ts, command, {{"submitted", submitted}, {"advisory_only", !submitted}});
+  }
 }
 
 class SimGateway final : public MarketGateway {
@@ -577,7 +749,16 @@ MarketSnapshot run_gateway_session(MarketGateway& gateway, Strategy& strategy, A
   if (logger) {
     logger->log_decision(snapshot.now, strategy.name(), start_decision.diagnostics);
   }
-  gateway.submit(start_decision.commands);
+  if (config.run.live.enabled) {
+    log_live_commands(logger, snapshot.now, start_decision.commands, !config.run.advisory_only);
+  }
+  AdvisoryFeedState advisory_state;
+  if (config.run.advisory_only && should_print_advisory(snapshot, start_decision, advisory_state)) {
+    std::cout << render_advisory_feed(snapshot, strategy.name(), start_decision) << std::endl;
+  }
+  if (!config.run.advisory_only) {
+    gateway.submit(start_decision.commands);
+  }
 
   int arb_orders = 0;
   int event_orders = 0;
@@ -618,7 +799,15 @@ MarketSnapshot run_gateway_session(MarketGateway& gateway, Strategy& strategy, A
       if (logger) {
         logger->log_decision(snapshot.now, strategy.name(), decision.diagnostics);
       }
-      gateway.submit(decision.commands);
+      if (config.run.live.enabled) {
+        log_live_commands(logger, snapshot.now, decision.commands, !config.run.advisory_only);
+      }
+      if (config.run.advisory_only && should_print_advisory(snapshot, decision, advisory_state)) {
+        std::cout << render_advisory_feed(snapshot, strategy.name(), decision) << std::endl;
+      }
+      if (!config.run.advisory_only) {
+        gateway.submit(decision.commands);
+      }
       for (const auto& command : decision.commands) {
         const auto json = command_to_json(command);
         if (json.at("type").get<std::string>() == "place_limit") {
@@ -664,7 +853,15 @@ MarketSnapshot run_gateway_session(MarketGateway& gateway, Strategy& strategy, A
     logger->log_decision(snapshot.now, strategy.name(), end_decision.diagnostics);
     logger->log_snapshot(snapshot);
   }
-  gateway.submit(end_decision.commands);
+  if (config.run.live.enabled) {
+    log_live_commands(logger, snapshot.now, end_decision.commands, !config.run.advisory_only);
+  }
+  if (config.run.advisory_only && should_print_advisory(snapshot, end_decision, advisory_state)) {
+    std::cout << render_advisory_feed(snapshot, strategy.name(), end_decision) << std::endl;
+  }
+  if (!config.run.advisory_only) {
+    gateway.submit(end_decision.commands);
+  }
   gateway.flush();
   gateway.disconnect();
 
