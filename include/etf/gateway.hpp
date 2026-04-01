@@ -19,6 +19,8 @@ class MarketGateway {
   virtual void submit(const std::vector<OrderCommand>& commands) = 0;
   virtual void flush() = 0;
   virtual void disconnect() = 0;
+  virtual bool ready_for_strategy_start() const { return true; }
+  virtual bool finished() const { return false; }
 };
 
 class Simulator;
@@ -27,7 +29,8 @@ std::unique_ptr<MarketGateway> make_sim_gateway(const AppConfig& config);
 std::unique_ptr<MarketGateway> make_sim_gateway(const AppConfig& config, RunLogger* logger);
 std::unique_ptr<MarketGateway> make_replay_gateway(const AppConfig& config);
 std::unique_ptr<MarketGateway> make_replay_gateway(const AppConfig& config, RunLogger* logger);
-std::unique_ptr<MarketGateway> make_web_gateway_stub(const AppConfig& config);
+std::unique_ptr<MarketGateway> make_live_gateway(const AppConfig& config);
+std::unique_ptr<MarketGateway> make_live_gateway(const AppConfig& config, RunLogger* logger);
 
 MarketSnapshot run_gateway_session(MarketGateway& gateway, Strategy& strategy, AppConfig config,
                                    SummaryStats* summary = nullptr, RunLogger* logger = nullptr);

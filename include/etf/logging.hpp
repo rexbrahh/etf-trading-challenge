@@ -28,5 +28,6 @@ class RunLogger {
 
 SummaryStats simulate_to_log(const AppConfig& config);
 SummaryStats replay_to_log(const AppConfig& config);
+SummaryStats live_to_log(const AppConfig& config);
 
 }  // namespace etf

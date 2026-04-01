@@ -107,4 +107,14 @@ SummaryStats replay_to_log(const AppConfig& config) {
   return summary;
 }
 
+SummaryStats live_to_log(const AppConfig& config) {
+  RunLogger logger(config.run.log_output_path);
+  auto strategy = make_strategy(config.strategy);
+  auto gateway = make_live_gateway(config, &logger);
+  SummaryStats summary;
+  run_gateway_session(*gateway, *strategy, config, &summary, &logger);
+  logger.log_summary(summary);
+  return summary;
+}
+
 }  // namespace etf
