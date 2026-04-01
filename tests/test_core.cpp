@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
+#include <filesystem>
+#include <fstream>
+
 #include "etf/core.hpp"
 
 TEST_CASE("settlement math matches packet formulas") {
@@ -27,4 +30,26 @@ TEST_CASE("side parsing accepts exchange casing") {
   REQUIRE(etf::side_from_string("Buy") == etf::Side::Buy);
   REQUIRE(etf::side_from_string("sell") == etf::Side::Sell);
   REQUIRE(etf::side_from_string("Sell") == etf::Side::Sell);
+}
+
+TEST_CASE("config round-trip preserves advisory mode") {
+  const auto path = std::filesystem::temp_directory_path() / "etf_advisory_config.json";
+  {
+    std::ofstream out(path);
+    out << R"({
+      "simulation": {},
+      "strategy": { "name": "challenge_v1" },
+      "run": {
+        "advisory_only": true,
+        "live": { "enabled": true, "access_token": "token" }
+      }
+    })";
+  }
+
+  const auto config = etf::load_config_from_path(path.string());
+  REQUIRE(config.run.advisory_only);
+  REQUIRE(config.run.live.enabled);
+  REQUIRE(etf::config_to_json(config).at("run").at("advisory_only").get<bool>());
+
+  std::filesystem::remove(path);
 }

@@ -265,6 +265,7 @@ AppConfig load_config_from_path(const std::string& path) {
   config.run.log_output_path = get_or(run, "log_output_path", config.run.log_output_path);
   config.run.replay_input_path = get_or(run, "replay_input_path", config.run.replay_input_path);
   config.run.sweep_overrides = get_or(run, "sweep_overrides", config.run.sweep_overrides);
+  config.run.advisory_only = get_or(run, "advisory_only", config.run.advisory_only);
   if (run.contains("live")) {
     const auto& live = run.at("live");
     config.run.live.enabled = get_or(live, "enabled", config.run.live.enabled);
@@ -350,6 +351,7 @@ nlohmann::json config_to_json(const AppConfig& config) {
            {"log_output_path", config.run.log_output_path},
            {"replay_input_path", config.run.replay_input_path},
            {"sweep_overrides", config.run.sweep_overrides},
+           {"advisory_only", config.run.advisory_only},
            {"live",
             {
                 {"enabled", config.run.live.enabled},

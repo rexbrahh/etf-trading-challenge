@@ -45,6 +45,7 @@
       { "path": "simulation.seed", "values": [7, 8, 9] },
       { "path": "strategy.edge_buffer_ticks", "values": [1, 2, 3] }
     ],
+    "advisory_only": false,
     "live": {
       "enabled": false,
       "api_base_url": "https://api.comp.waterlooquantclub.com",

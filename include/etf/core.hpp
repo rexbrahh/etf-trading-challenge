@@ -200,6 +200,7 @@ struct RunConfig {
   std::string log_output_path{"tmp/default_run.ndjson"};
   std::string replay_input_path;
   nlohmann::json sweep_overrides = nlohmann::json::array();
+  bool advisory_only{false};
   LiveConfig live;
 };
 

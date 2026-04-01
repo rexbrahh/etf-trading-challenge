@@ -42,6 +42,7 @@
     "log_output_path": "tmp/live_probe.ndjson",
     "replay_input_path": "",
     "sweep_overrides": [],
+    "advisory_only": false,
     "live": {
       "enabled": true,
       "api_base_url": "https://api.comp.waterlooquantclub.com",
