@@ -165,3 +165,26 @@ or
   - websocket connection to `wss://api.comp.waterlooquantclub.com/ws`
   - `RequestState` and `GameAction` envelopes
 - The tricky part is not the order schema anymore; it is cookie-aware websocket session management.
+
+## Local live controller
+
+- The repo now ships a one-round live controller that keeps the strategy core in C++ and uses a tiny Node bridge for:
+  - `POST /auth/user/login`
+  - session-cookie capture
+  - websocket transport to `wss://api.comp.waterlooquantclub.com/ws`
+  - translation between exchange updates and the local `MarketEvent` model
+- Launch it with:
+
+```bash
+./build/etf_lab live configs/live_template.json
+```
+
+- Behavior:
+  - waits in pre-trading states until the run enters `Trading`
+  - if no Exchange run is active yet, polls `/user/game-runs` until one appears
+  - auto-subscribes the configured books
+  - auto-sends `MarkReady` in `Lobby`
+  - exits after the first `Trading` phase ends
+- Requirement:
+  - `run.live.access_token` must be set to a valid competitor token before launch
+  - `run.live.run_id` can be blank or stale; the bridge now prefers the currently active Exchange run from `/user/game-runs`
