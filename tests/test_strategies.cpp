@@ -109,6 +109,122 @@ TEST_CASE("risk caps suppress new hybrid exposure") {
   }
 }
 
+TEST_CASE("challenge_v1 target delta turns negative on positive exogenous flow with low k") {
+  etf::StrategyConfig config;
+  config.name = "challenge_v1";
+  auto strategy = etf::make_strategy(config);
+
+  auto snapshot = make_snapshot();
+  snapshot.books[etf::Symbol::E] = etf::TopOfBook{etf::Symbol::E, etf::BookLevel{519, 10}, etf::BookLevel{521, 10}};
+  const auto decision = strategy->on_event(
+      etf::TradePrint{snapshot.now, etf::Symbol::E, etf::Side::Buy, 521, 20, "noise_bot", std::nullopt, false},
+      snapshot);
+
+  REQUIRE(decision.diagnostics.at("target_delta_E").get<int>() < 0);
+}
+
+TEST_CASE("challenge_v1 weights F events triple E for ETF fair impact") {
+  etf::StrategyConfig config;
+  config.name = "challenge_v1";
+
+  auto snapshot = make_snapshot();
+
+  auto e_strategy = etf::make_strategy(config);
+  const auto e_decision = e_strategy->on_event(
+      etf::TradePrint{snapshot.now, etf::Symbol::E, etf::Side::Buy, 511, config.event_threshold_qty, "event_bot",
+                      std::nullopt, false},
+      snapshot);
+  const auto e_shift = e_decision.diagnostics.at("etf_fair").get<double>() - 500.0;
+
+  auto f_strategy = etf::make_strategy(config);
+  const auto f_decision = f_strategy->on_event(
+      etf::TradePrint{snapshot.now, etf::Symbol::F, etf::Side::Buy, 501, config.event_threshold_qty, "event_bot",
+                      std::nullopt, false},
+      snapshot);
+  const auto f_shift = f_decision.diagnostics.at("etf_fair").get<double>() - 500.0;
+
+  REQUIRE(f_shift == Catch::Approx(3.0 * e_shift));
+}
+
+TEST_CASE("challenge_v1 keeps passive quotes inside band and off the touch after clipping") {
+  etf::StrategyConfig config;
+  config.name = "challenge_v1";
+  auto strategy = etf::make_strategy(config);
+
+  auto snapshot = make_snapshot();
+  for (const auto symbol : etf::all_symbols()) {
+    snapshot.books[symbol] = etf::TopOfBook{symbol, etf::BookLevel{698, 10}, etf::BookLevel{700, 10}};
+  }
+
+  strategy->on_event(
+      etf::TradePrint{snapshot.now, etf::Symbol::E, etf::Side::Buy, 700, 25'000, "noise_bot", std::nullopt, false},
+      snapshot);
+  strategy->on_event(
+      etf::TradePrint{snapshot.now + 1, etf::Symbol::T, etf::Side::Buy, 700, 25'000, "noise_bot", std::nullopt, false},
+      snapshot);
+  snapshot.now += 2;
+  const auto decision = strategy->on_event(
+      etf::TradePrint{snapshot.now, etf::Symbol::F, etf::Side::Buy, 700, 25'000, "noise_bot", std::nullopt, false},
+      snapshot);
+
+  for (const auto& command : decision.commands) {
+    if (!std::holds_alternative<etf::PlaceLimit>(command)) {
+      continue;
+    }
+    const auto order = std::get<etf::PlaceLimit>(command);
+    REQUIRE(order.price >= etf::kMinPrice);
+    REQUIRE(order.price <= etf::kMaxPrice);
+    if (order.tag.find("quote") != std::string::npos) {
+      const auto ask = snapshot.books.at(order.symbol).ask->price;
+      const auto bid = snapshot.books.at(order.symbol).bid->price;
+      if (order.side == etf::Side::Buy) {
+        REQUIRE(order.price < ask);
+      } else {
+        REQUIRE(order.price > bid);
+      }
+    }
+  }
+}
+
+TEST_CASE("challenge_v1 respects per-symbol active order budget") {
+  etf::StrategyConfig config;
+  config.name = "challenge_v1";
+  auto strategy = etf::make_strategy(config);
+
+  auto snapshot = make_snapshot();
+  strategy->on_event(etf::Ack{snapshot.now, 1, etf::Symbol::E, etf::Side::Buy, 498, 3, "challenge_quote_E_bid"}, snapshot);
+  strategy->on_event(etf::Ack{snapshot.now, 2, etf::Symbol::E, etf::Side::Sell, 502, 3, "challenge_quote_E_ask"}, snapshot);
+  strategy->on_event(etf::Ack{snapshot.now, 3, etf::Symbol::E, etf::Side::Buy, 497, 3, "challenge_unwind_buy_E"}, snapshot);
+  strategy->on_event(etf::Ack{snapshot.now, 4, etf::Symbol::E, etf::Side::Sell, 503, 3, "challenge_unwind_sell_E"}, snapshot);
+  strategy->on_event(etf::Ack{snapshot.now, 5, etf::Symbol::E, etf::Side::Buy, 501, 3, "challenge_event_reprice_buy_E"}, snapshot);
+  strategy->on_event(etf::Ack{snapshot.now, 6, etf::Symbol::E, etf::Side::Sell, 499, 3, "challenge_event_reprice_sell_E"}, snapshot);
+
+  const auto decision = strategy->on_timer(etf::Timer{snapshot.now, "timer"}, snapshot);
+  for (const auto& command : decision.commands) {
+    if (std::holds_alternative<etf::PlaceLimit>(command)) {
+      REQUIRE(std::get<etf::PlaceLimit>(command).symbol != etf::Symbol::E);
+    }
+  }
+}
+
+TEST_CASE("challenge_v1 basket arb is all or none across risk checks") {
+  etf::StrategyConfig config;
+  config.name = "challenge_v1";
+  auto strategy = etf::make_strategy(config);
+
+  auto snapshot = make_snapshot();
+  snapshot.books[etf::Symbol::ETF] =
+      etf::TopOfBook{etf::Symbol::ETF, etf::BookLevel{504, 10}, etf::BookLevel{506, 10}};
+  snapshot.positions[etf::Symbol::F].qty = config.max_abs_position;
+
+  const auto decision = strategy->on_timer(etf::Timer{snapshot.now, "timer"}, snapshot);
+  for (const auto& command : decision.commands) {
+    if (std::holds_alternative<etf::PlaceLimit>(command)) {
+      REQUIRE(std::get<etf::PlaceLimit>(command).tag.find("basket_arb") == std::string::npos);
+    }
+  }
+}
+
 TEST_CASE("simulator is deterministic and replay reproduces order decisions") {
   auto config = etf::load_config_from_path("/Users/rexliu/etf-trading-challenge/configs/default.json");
   config.simulation.duration_us = 40'000;

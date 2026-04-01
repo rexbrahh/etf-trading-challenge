@@ -40,7 +40,7 @@ int main() {
   base.run.log_output_path.clear();
   base.simulation.duration_us = 120'000;
 
-  const std::vector<std::string> strategies{"basket_arb", "event_prop", "hybrid"};
+  const std::vector<std::string> strategies{"basket_arb", "event_prop", "hybrid", "challenge_v1"};
   const int rounds = 1000;
   const auto start = std::chrono::steady_clock::now();
 
