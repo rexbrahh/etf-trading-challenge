@@ -24,11 +24,14 @@ let currentPhase = null;
 let sawTrading = false;
 let readySent = false;
 let shuttingDown = false;
+let bootstrapStateApplied = false;
 
 const pendingCreates = [];
 const activeByLocalId = new Map();
 const serverToLocal = new Map();
 const replaceAfterCancel = new Map();
+const internalToExchangeMarket = new Map();
+const exchangeToInternalMarket = new Map();
 
 function sendControl(message) {
   if (!controlSocket || controlSocket.destroyed) {
@@ -59,6 +62,37 @@ function normalizeSide(value) {
   throw new Error(`unknown side: ${value}`);
 }
 
+function rememberMarkets(markets) {
+  if (!Array.isArray(markets)) {
+    return;
+  }
+  for (const market of markets) {
+    const exchangeSymbol = String(market?.symbol ?? "");
+    const internalSymbol = String(market?.base_asset ?? "").toUpperCase();
+    if (!exchangeSymbol || !internalSymbol) {
+      continue;
+    }
+    internalToExchangeMarket.set(internalSymbol, exchangeSymbol);
+    exchangeToInternalMarket.set(exchangeSymbol, internalSymbol);
+  }
+}
+
+function toExchangeMarket(symbol) {
+  const normalized = String(symbol).toUpperCase();
+  return internalToExchangeMarket.get(normalized) ?? `${normalized}/USD`;
+}
+
+function toInternalSymbol(market) {
+  const normalized = String(market ?? "");
+  if (!normalized) {
+    return "ETF";
+  }
+  if (exchangeToInternalMarket.has(normalized)) {
+    return exchangeToInternalMarket.get(normalized);
+  }
+  return normalized.split("/", 1)[0].toUpperCase();
+}
+
 function capitalizeSide(value) {
   return normalizeSide(value) === "buy" ? "Buy" : "Sell";
 }
@@ -79,13 +113,14 @@ function bestLevel(levels) {
 }
 
 function emitBookUpdate(market, book) {
+  const symbol = toInternalSymbol(market);
   sendControl({
     type: "market_event",
     event: {
       type: "book_update",
       ts: toUs(Date.now()),
       book: {
-        symbol: market,
+        symbol,
         bid: bestLevel(book?.bids),
         ask: bestLevel(book?.asks),
       },
@@ -94,12 +129,13 @@ function emitBookUpdate(market, book) {
 }
 
 function emitTradePrint(market, trade) {
+  const symbol = toInternalSymbol(market);
   sendControl({
     type: "market_event",
     event: {
       type: "trade_print",
       ts: toUs(trade?.timestamp ?? Date.now()),
-      symbol: market,
+      symbol,
       aggressor_side: normalizeSide(trade?.side ?? "Buy"),
       price: Number(trade?.price),
       qty: Number(trade?.size),
@@ -122,6 +158,25 @@ function emitAck(localOrder) {
       price: localOrder.price,
       qty: localOrder.size,
       tag: localOrder.tag,
+    },
+  });
+}
+
+function emitBootstrapFill(fill) {
+  const symbol = toInternalSymbol(fill?.market);
+  sendControl({
+    type: "market_event",
+    event: {
+      type: "fill",
+      ts: toUs(fill?.timestamp ?? Date.now()),
+      order_id: 0,
+      symbol,
+      side: normalizeSide(fill?.side ?? "Buy"),
+      price: Number(fill?.price),
+      qty: Number(fill?.size),
+      aggressor: false,
+      source: "exchange_live_bootstrap",
+      tag: "bootstrap_fill",
     },
   });
 }
@@ -230,7 +285,7 @@ function dispatchPlace(localOrder) {
   activeByLocalId.set(request.localOrderId, { ...request, filledSize: 0, serverId: null, status: "PendingNew" });
   sendExchangeAction({
     action: "PlaceOrder",
-    market: request.symbol,
+    market: toExchangeMarket(request.symbol),
     side: capitalizeSide(request.side),
     price: request.price,
     size: request.size,
@@ -253,8 +308,8 @@ function maybeSendDeferredCancel(localOrder) {
 
 function handleOrderUpdate(rawOrder) {
   const order = {
-    serverId: Number(rawOrder.id),
-    symbol: String(rawOrder.market),
+    serverId: String(rawOrder.id),
+    symbol: toInternalSymbol(rawOrder.market),
     side: normalizeSide(rawOrder.side),
     price: Number(rawOrder.price),
     size: Number(rawOrder.size),
@@ -328,6 +383,7 @@ function reconcileOrderUpdates(orders) {
 function handleStateChange(state) {
   const previousPhase = currentPhase;
   currentPhase = state.phase;
+  rememberMarkets(state?.markets);
   const tradingActive = currentPhase === "Trading";
   sendControl({
     type: "status",
@@ -345,8 +401,14 @@ function handleStateChange(state) {
   if (tradingActive) {
     if (!sawTrading) {
       sawTrading = true;
+      if (!bootstrapStateApplied) {
+        bootstrapStateApplied = true;
+        for (const fill of state?.my_state?.fills ?? []) {
+          emitBootstrapFill(fill);
+        }
+      }
       for (const market of liveConfig.subscribe_markets) {
-        sendExchangeAction({ action: "SubscribeToBook", market, since: null });
+        sendExchangeAction({ action: "SubscribeToBook", market: toExchangeMarket(market), since: null });
       }
     }
     if (Array.isArray(state?.my_state?.open_orders)) {
