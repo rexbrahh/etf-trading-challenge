@@ -37,6 +37,18 @@ class StrategyBase : public Strategy {
   explicit StrategyBase(StrategyConfig config) : config_(std::move(config)) {}
 
  protected:
+  bool is_live_exchange_tape(const TradePrint& trade) const { return trade.source == "exchange_live_tape"; }
+
+  bool contributes_exogenous_flow(const TradePrint& trade) const {
+    return !trade.team_involved && trade.symbol != Symbol::ETF &&
+           (trade.source == "noise_bot" || trade.source == "event_bot" || is_live_exchange_tape(trade));
+  }
+
+  bool contributes_event_signal(const TradePrint& trade) const {
+    return !trade.team_involved && trade.symbol != Symbol::ETF &&
+           (trade.source == "event_bot" || is_live_exchange_tape(trade));
+  }
+
   void sync_from_snapshot(const MarketSnapshot& snapshot) { books_ = snapshot.books; }
 
   void ingest_event(const MarketEvent& event) {
@@ -51,8 +63,7 @@ class StrategyBase : public Strategy {
             while (!trades.empty() && payload.ts - trades.front().ts > config_.event_lookback_us) {
               trades.pop_front();
             }
-            if ((payload.source == "noise_bot" || payload.source == "event_bot") && !payload.team_involved &&
-                payload.symbol != Symbol::ETF) {
+            if (contributes_exogenous_flow(payload)) {
               const auto aggressor_signed_qty = payload.aggressor_side == Side::Buy ? payload.qty : -payload.qty;
               exo_flow_estimate_[payload.symbol] += aggressor_signed_qty;
 
@@ -604,7 +615,7 @@ class ChallengeV1Strategy final : public StrategyBase {
     }
     int signed_qty = 0;
     for (const auto& trade : trades_it->second) {
-      if (trade.source == "event_bot" && !trade.team_involved && now - trade.ts <= config_.event_lookback_us) {
+      if (contributes_event_signal(trade) && now - trade.ts <= config_.event_lookback_us) {
         signed_qty += trade.aggressor_side == Side::Buy ? trade.qty : -trade.qty;
       }
     }
@@ -919,7 +930,7 @@ class ChallengeV1Strategy final : public StrategyBase {
 
   StrategyDecision react_to_trade(const TradePrint& trade, const MarketSnapshot& snapshot) {
     auto decision = reactive_diagnostics(snapshot);
-    if (trade.source == "event_bot" && trade.symbol != Symbol::ETF && !trade.team_involved) {
+    if (contributes_event_signal(trade)) {
       const auto fairs = single_name_fairs(snapshot.now);
       const auto etf_fair = challenge_etf_fair(fairs);
       decision = merge(std::move(decision), manage_event_and_unwind(snapshot, fairs, etf_fair));
